@@ -1,0 +1,1654 @@
+---
+title: "Proyecto de Transcritómica - UAM - 2019/2020 "
+author:
+- name: Álvaro Huertas García 
+  affiliation: Universidad Autonoma de Madrid (UAM)
+output:
+  BiocStyle::html_document:
+    css: "./css/style.css"
+    toc: true
+    toc_float: true
+    
+classoption: a4paper
+geometry: margin=3cm
+fontsize: 12pt
+abstract: |
+   Proyecto de Transcriptómica del Máster en Bioinformática y Biología Computacional de la UAM
+vignette: |
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+
+header-includes:
+  - \usepackage{amsmath}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Cargamos las librerías
+
+```{r message = FALSE, warning=FALSE}
+# Load required libraries
+
+suppressPackageStartupMessages({
+library("BiocStyle")
+library("affy")
+library("limma")
+library("genefilter")
+library("hgu133plus2.db")
+library("calibrate")
+library("ArrayTools")})
+```
+
+
+# Diseño del trabajo de análisis
+
+## Diseño del análisis
+
+Para el trabajo será interesante realizar dos tipos de estudios:
+
+**1. Podemos analizar las dos líneas por separado y ver si sacamos los mismos
+resultados, lo que indicaría que las dos líneas celulares son equivalentes, pero
+si salen resultados diferentes podemos concluir que son líneas independientes**
+
+**2. Podemos juntar las dos líneas celulares y comparar simplemente el efecto de 
+los tratamientos DMSO y SAMH1.** Aquí estaríamos comprobando si hay un efecto o 
+patrón común en ambas líneas celulares.
+
+
+Primero veremos si hay grandes diferencias entre los controles KOPT-K1_DMSO y
+HPB-ALL_DMSO. Esto es un estudio inicial para ver si ya se observan diferencias 
+entre ambas líneas celulares. $\rightarrow$ $H_{0}:$ las dos líneas celulares
+son iguales. Vemos boxplot y distribución de intensidades. Normalizamos. Análisis
+de expresión diferencial. Ver si hay diferencias. 
+
+Tras la aproximación inicial en la que vemos si las líneas celulares son iguales
+o no hacemos el estudio independiente. 
+
+
+# Comparación controles
+
+##  Cargamos los ficheros .CEL y extraemos el raw data
+
+Los ficheros control son:
+
+* KOPT-K1_DMSO $\rightarrow$ "GSM455115.CEL", "GSM455116.CEL", "GSM455117.CEL"
+
+* HPB-ALL_DMSO $\rightarrow$ "GSM455118.CEL", "GSM455119.CEL", "GSM455120.CEL"
+
+```{r cargamos-ficheros-CEL-control, warning=FALSE}
+
+# Read .CEL files 
+# data <- ReadAffy(filenames=targets$FileName)
+CELfiles_control <- c("GSM455115.CEL", "GSM455116.CEL", "GSM455117.CEL", "GSM455118.CEL", "GSM455119.CEL", "GSM455120.CEL")
+
+rawdata_control <- ReadAffy(filenames = CELfiles_control)
+rawdata_control
+```
+
+##  Análisis exploratorio de la calidad de los datos iniciales
+
+```{r}
+# Exploratory graphs that provide information about the quality of the arrays
+library("RColorBrewer")
+
+# Select 9 (maximum) different color in the palette Set1. Return them in a vector
+usr.col <- brewer.pal(9, "Set1")
+
+# Repeat each color three times, such there are three arrays per sample type
+mycols <- rep(usr.col, each = 3)
+```
+
+### Distribución de las intensidades
+
+```{r Distribucion-intensidades-control, message = FALSE, warning=FALSE}
+#########################
+# Intensity distributions
+#########################
+
+# Show intensity distributrions with hist function 
+H <- hist(rawdata_control, lty = rep(1, length(CELfiles_control )), col = mycols,
+   main = "Intensity distributions Before Normalization", cex.labels = 3)
+# Add legend in the top right corner 
+legend_names <- c("KOPT-1", "KOPT-2", "KOPT-3", "HPB-1", "HPB-2", "HPB-3")
+legend("topright", rownames(pData(rawdata_control)),
+       lty = rep(1, length(CELfiles_control )), 
+       col = mycols,
+       cex = 1.2, 
+       legend = legend_names )
+```
+
+Observamos que entre microarrays del tipo celular KOPT-T1 la distribución es muy parecida, pero en el caso del tipo celular HPB-ALL existen diferencias en la distribución entre microarrays, aunque nada preocupante. También se observa que la distribución entre tipos celulares es diferente. 
+
+### Boxplot
+
+```{r control-boxplot}
+# boxplot antes de normalizar
+par(mfrow = c(1, 1)) ## two figures side by side
+
+boxplot(rawdata_control,
+        main="Boxplot Before Normalization",
+        col = mycols,
+        names = legend_names, # sampleNames(rawdata_control),
+        las = 2,  # vertical labels
+        cex.axis = 1.2, # size labels
+        yaxt = "n") # do not show y labels
+axis(2, cex.axis = 1.2) # plot y labels with higher size
+```
+
+Volvemos a observar los mismo que en el gráfico de las distribuciones de intensidades: existe mayor variación entre los microarrays pertenecientes al tipo celular HPB-ALL, que en el caso del tipo celular KOPT-K1. No obstante, no hay nada preocupante. 
+
+
+## Normalización con RMA
+
+```{r Normalizacion-RMA-control}
+# Normalize with RMA 
+# generates object eset (class ExprSet), 
+#expresso function provides intensities in log scale
+eset_control <- expresso(rawdata_control,
+                 bg.correct = TRUE, 
+                 bgcorrect.method="rma", # corregir fondo
+                 normalize = TRUE, 
+                 normalize.method="quantiles", 
+                 pmcorrect.method="pmonly", # los que machean perfectamente
+                 summary.method="medianpolish", # resumeme por la mediana par aun mismo gen
+                 verbose = TRUE,
+) 
+```
+
+### Distribución de la intensidad tras la normalización 
+
+```{r control-intensity, message = FALSE}
+
+# Intensity distributions after normalization
+
+# Show intensity distributrions
+exprseset_control <- as.data.frame(exprs(eset_control)) # cojo las intensidades normalizadas
+dens_control <- apply(data.frame(exprseset_control), 2, density)
+
+plot(NA, xlim=range(sapply(dens_control, "[", "x")), 
+     ylim=range(sapply(dens_control, "[", "y")),
+     main = "Intensity distributions controls After Normalization",
+     xlab = "log intensity", ylab = "density")
+distribution_control <- mapply(lines, dens_control, col=c(rep(mycols[1], 3), rep(mycols[4], 3)), lwd = 1)
+legend_names <- c("KOPT-1", "KOPT-2", "KOPT-3", "HPB-1", "HPB-2", "HPB-3")
+# Add legend in the top right corner names(dens_control)
+legend("topright", legend=legend_names, lty = rep(1, length(CELfiles_control)), col = mycols, cex = 1)
+```
+
+### Boxplots tras la normalización
+
+
+```{r control-boxplot2}
+# boxplot de todos los genes después de normalizar
+boxplot(data.frame(exprseset_control),
+        main="Boxplot Controls After Normalization (log scale)",
+        col = mycols,
+        names = legend_names, # sampleNames(rawdata_control),
+        las = 2,  # vertical labels
+        cex.axis = 1.3, # size labels
+        yaxt = "n") # do not show y labels
+axis(2, cex.axis = 1.2) # plot y labels with higher size
+```
+
+
+### Scatter plot and MA-plot tras normalización
+
+```{r control-scatter-plot}
+
+# Note that the original eset object contains the log2-transformed gene intensities
+exprseset_control <- as.data.frame(exprs(eset_control)) # retrieve log2 intensities
+head(exprseset_control) # show log2 intensities
+
+# Normal intensity
+intens_control = 2^exprseset_control # transform from log2 to normal intensity
+head(intens_control)
+```
+
+Para realizar el scatter plot es necesario combinar las réplicas de cada línea celular. 
+Se emplea la mediana en preferencia a la media, dado que la 
+mediana es más robusta para situaciones con tamaño muestral pequeño (como en nuestro caso donde 
+$n = 3$) [[1]](#Rousseeuw). 
+
+```{r control-scatter-plot-normalizacion}
+# Create reference median array for each cell line to compare
+# median intensity for KOPT-K1 control DMSO
+intens_control_KOPT = apply(intens_control[, c(1, 2, 3)], 1, median)
+# median intensity for HPB-ALL control DMSO
+intens_control_HPB = apply(intens_control[, c(4, 5, 6)], 1, median)
+
+plot(intens_control_KOPT, intens_control_HPB, cex = 1, 
+     pch = 19, col = "mediumaquamarine",
+     xlab = "KOPT-K1",
+     ylab = "HPB-ALL",
+     main = "Cell lines control expression level after normalization")
+
+abline(a = 0,
+       b = (max(intens_control[, 4]) / max(intens_control[, 1])), col = "red",
+       lwd = 2)
+
+```
+
+
+La gráfica de scatter-plot nos permite observar que la mayoría de los genes están localizados en la diagonal y no hay un patrón en la nube de puntos, así que la mayoría de los genes estudiados son expresados a niveles similares en ambos tipos de células. Sin embargo, hay algunos genes que están separados de la diagonal, siendo más expresados en uno de los dos tipos de células. Es interesante continuar con la expresión diferencial  análisis basados en métodos estadísticos para comprobar si estas diferencias son  significativo y debemos estudiar las líneas celulares por separado.
+
+Otro tipo de gráfico utilizado es el gráfico de "ratio-versus-intensity" (gráfico MA). En esta gráfica, en el eje y se traza el ratio de intensidad (M) frente a la intensidad media (A). 
+
+Asumimos que la mayoría de los genes no verían ningún cambio en su expresión entre las líneas celulares KOPT-K1 y HPB-ALL, por lo que se situarán en $y=0$
+
+```{r MA-plot-control-normalizacion}
+A <- 1/2*log2(intens_control_KOPT*intens_control_HPB)
+M <- log2(intens_control_KOPT/intens_control_HPB)
+plot(A, M, cex = 0.75, pch = 19, col = "steelblue", 
+     main = "Cell lines control expression level after normalization" )
+
+abline(h = 0, col = "red", lty = 2, lwd = 2)
+```
+
+
+Volvemos a ver que la mayoría de genes se sitúa en torno al valor central $y=0$,
+lo que indica que se expresan igual en ambos tipos celulares. No obstante, 
+existen genes que se alejan de este valor central que deben ser estudiados. 
+
+Existen genes diferencialmente expresados en ambos tipos celulares. Ya tenemos indicios de 
+que las líneas celulares son diferentes. Algunos de esos genes podrían afectar al estudio, 
+como comprobaremos más adelante
+
+
+
+
+### Filtro del rango intercuartílico
+
+```{r control-IQR}
+# boxplot de solo los genes normalizados con un ranog intercuartílico superior a 0.5 para que tengan variabilidad
+esetIQR_control <- varFilter(eset_control, var.func=IQR, var.cutoff=0.5, filterByQuantile=TRUE)
+
+## Comprobamos el filtro del rango intercuartílico
+dim(exprs(eset_control))
+dim(exprs(esetIQR_control))
+
+
+
+# boxplot de solo los genes normalizados con un ranog intercuartílico superior a 0.5 para que tengan variabilidad
+exprsesetIQR_control <- as.data.frame(exprs(esetIQR_control))
+
+boxplot(data.frame(exprsesetIQR_control),
+        main="Boxplot Controls After Normalization and IQR filter (log scale)",
+        col = mycols[1:6],
+        names = legend_names, # sampleNames(rawdata_control),
+        las = 2,  # vertical labels
+        cex.axis = 1.2, # size labels
+        yaxt = "n") # do not show y labels
+axis(2, cex.axis = 1.2) # plot y labels with higher size
+```
+
+### PCA
+
+La PCA es una herramienta que permite visualizar la distribución de las muestras en función de las variables (genes). La utilidad de la PCA es la capacidad de visualizar esta distribución en pocas dimensiones cuando se disponen de múltiples dimensiones. Es importante siempre indicar cuanta varianza es explicada por las componentes seleccionadas para la representación. Cuanto mayor sea esta mayor fiabilidad de la distribución de los datos. 
+
+```{r PCA-control}
+PCA_g <- prcomp(t(exprs(eset_control)))
+summary(PCA_g)
+rownames(PCA_g$x) <- c("KOPT-K1_01", "KOPt-K1_02", "KOPT-K1_03", "HPB-ALL_01", "HPB-ALL_02", "HPB-ALL_03")
+pc_dat<- data.frame(type = rownames(PCA_g$x), PC1 = PCA_g$x[,1], PC2=PCA_g$x[,2])
+library(ggplot2)
+ggplot(pc_dat,aes(x=PC1, y=PC2, col=type)) + geom_point(size = 5) + theme(
+  legend.title = element_text(color = "black", size = 14),
+  legend.text = element_text(color = "black" , size = 14),
+  axis.text=element_text(size=12),
+  axis.title=element_text(size=14,face="bold")) + xlab("PC1 (87%)") + ylab("PC2 (4%)") +
+  ggtitle("PCA KOPT-K1 and HPB-ALL cell lines in DMSO")
+```
+
+
+## Expresión diferencial
+
+### Análisis estadístico
+
+Generamos la matriz donde guardaremos el diseño experimental que empleará _makeContrast_ 
+para realizar la comparación de niveles de transcripción. A cada archivo .CEL 
+le asigno un número en función del tratamiento y línea celular.
+
+* KOPT-K1_DMSO $\rightarrow$ 1
+
+* HPB-ALL_DMSO $\rightarrow$ 2
+
+
+```{r}
+
+# Generamos la matriz de diseño experimental
+design_control <- model.matrix(~ 0+factor(c(1,1,1,2,2,2)))
+rownames(design_control)<-sampleNames(rawdata_control)
+colnames(design_control) <- c("KOPT_DMSO", "HPB_DMSO")
+```
+
+Realizamos el ajuste de cada grupo a una recta y realizamos el estudio de expresión diferencial empleando 
+la función *makeContrast*
+
+```{r}
+## ajustamos cada nube de puntos correspondiente a cada grupo a una recta
+fit_control <- lmFit(esetIQR_control, design_control)
+
+## establecemos las comparaciones que queremos realizar
+contrast.matrix_control <- makeContrasts(KOPT_DMSO - HPB_DMSO, levels=design_control)
+
+## comparamos las regresiones lineales según el patrón de contraste pedido
+fit2_control <- contrasts.fit(fit_control, contrast.matrix_control)
+
+fit2_control<-eBayes(fit2_control)
+```
+
+
+
+
+```{r}
+#Table with DEGs results number te cogerá todos los genes (filas) que tenia esetIQR
+toptableIQR_control<-topTable(fit2_control, number=dim(exprs(esetIQR_control))[1],
+                              adjust.method="BH", coef = 1,  sort.by="p") 
+# para poder ordenar por "p" necesito poner el coeficiente, es decir, que sepa que comparación debe coger
+head(toptableIQR_control)
+
+```
+
+Ahora quiero quedarme solo con los genes que cumplan un FDR<0.05 (adjusted P-value)
+
+```{r}
+
+# Data frame with the values of the spot
+Control.fdr.005.table<-subset(toptableIQR_control, 
+                              toptableIQR_control$adj.P.Val<=0.05)
+dim(Control.fdr.005.table)
+summary(Control.fdr.005.table) ##  Check the maximum adj.P.val is < 0.05
+```
+
+
+Hemos pasado de 54675 genes iniciales a 27335 tras el filtro IR y, finalmente,
+a 20612 genes tras el filtro de FDR.
+
+### Incorporación de los nombres de los genes
+
+Queremos incorporar anotaciones a *Control.fdr.005.table*
+
+```{r, message=FALSE, results=FALSE, warning=FALSE}
+library("hgu133plus2.db")
+```
+
+```{r}
+# Recuperamos los nombres de las sondas de los diferentes spots del microarray
+Control_probenames.fdr.005<-as.character(rownames(Control.fdr.005.table))
+head(Control_probenames.fdr.005)
+
+# Recuperamos la lista de genes asociados a las diferentes sondas del microarray
+Control_list.GeneSymbol.fdr.005<-mget(Control_probenames.fdr.005, hgu133plus2SYMBOL)
+head(Control_list.GeneSymbol.fdr.005)
+
+# ahora mostrmos solo los nombres de los genes
+Control_char.GeneSymbol.fdr.005<- as.character(Control_list.GeneSymbol.fdr.005)
+head(Control_char.GeneSymbol.fdr.005)
+
+# Añadimos al data frame la columna con los nombres de los genes
+Control_toptable.annotated<-cbind(Control.fdr.005.table, Control_char.GeneSymbol.fdr.005)
+head(Control_toptable.annotated)
+```
+
+Reordenamos las columnas colocando la nueva columna con los nombres de los genes en primer lugar
+
+```{r}
+# Change name column added
+colnames(Control_toptable.annotated)[length(colnames(Control_toptable.annotated))] <- "Gene_Name"
+
+# Get column names
+colnames(Control_toptable.annotated)
+
+# Reordering colnumns by positions. We want "Gene_names" as the second column
+
+Control_toptable.annotated<- Control_toptable.annotated[, c("Gene_Name", "logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B")]
+head(Control_toptable.annotated)
+  
+```
+
+
+
+Tenemos 20612 genes diferencialmente expresados entre los dos tipos celulares
+(FDR < 0.05, IQR > 0.05). 
+
+La importancia de estos genes es mejor verla con un GSEA, porque con un análisis
+estadístico no podemos entender bien el contexto biológico de estos genes
+expresados diferencialmente. Es precisamente su limitación, detectamos bien los
+genes expresados diferencialmente, pero nos falta la interpretación biológica. 
+Para ello realizaremos 
+
+
+### Presencia de los genes *HES1, MYC, DTX1* en DEGs entre líneas celulares 
+
+Aquí no puedo comprobar nada en específico del paper porque el paper no estudia
+este escenario. Pero sí ver si los genes que mostraban encontrarse sub-regulados
+en el tratamiento con SAHM1: *HES1, MYC, DTX1* se encuentran también
+diferencialmente expresados entre ambos tipos celulares. Si estos genes están 
+entre los genes diferencialmente expresados entre los dos tipos celulares,
+clarísimamente tenemos que estudiar los dos tipos celulares por separado, porque
+su estudio en conjunto enmascararía el resultado encontrado en el paper. Si 
+las líneas celulares que vamos a usar de control ya tienen diferentes esos genes,
+cuando hagamos la comparación con el tratamiento con SAHM1 nos va a costar mucho 
+más encontrar diferencias, porque las propias diferencias entre los tipos celulares
+lo estás usando para normalizar y eso nos va a hacer perder señal.
+
+
+Pero antes, veamos si están estos genes *HES1, MYC, DTX1* entre los genes
+diferencialmente expresados:
+```{r}
+# Busco si los genes del artículo se encuentran entre los genes diferencialmente expresados
+"HES1" %in% unique(Control_toptable.annotated$Gene_Name)
+"MYC" %in% unique(Control_toptable.annotated$Gene_Name)
+"DTX1" %in% unique(Control_toptable.annotated$Gene_Name)
+"HES4" %in% unique(Control_toptable.annotated$Gene_Name)
+```
+
+
+Lo ideal sería estudiar las líneas celulares por separado. 
+Porque si las agrupamos en un solo grupo control, cuando comparemos con el 
+tratamiento con ASHM1, si nos salen esos genes expresados diferencialmente
+no podremos saber si esa expresión diferencial se debe al tratamiento con 
+ASMH1 o al tipo celular. 
+
+### Volcano plot 
+
+
+
+Un gráfico volcano-plot muestra el logFC en el eje horizontal, y los valores $p$ en el eje vertical, para cada gen. Los umbrales para ambos ejes pueden ser aplicados simultáneamente. 
+
+Realizo en análisis estadístico con todos los spots del microarray en vez de realizar
+como paso previo al filtrado por IQR para poder visualizar la totalidad de los spots
+del microarray. 
+
+```{r estadistico-array-completo-control}
+## ajustamos cada nube de puntos correspondiente a cada grupo a una recta
+fit_control_completo <- lmFit(eset_control, design_control)
+
+## establecemos las comparaciones que queremos realizar
+## Tenemos que dividir entre 2 para que tengan todos el mismo peso. Las dos últimas no tienen ningún sentido
+contrast.matrix_control_completo <- makeContrasts(KOPT_DMSO - HPB_DMSO, levels=design_control)
+
+## comparamos las regresiones lineales según el patrón de contraste pedido
+fit2_control_completo <- contrasts.fit(fit_control_completo, contrast.matrix_control_completo)
+
+fit2_control_completo<-eBayes(fit2_control_completo)
+
+#Table with DEGs results number te cogerá todos los genes (filas) que tenia esetIQR
+
+toptable_control_completo<-topTable(fit2_control_completo, number=dim(exprs(eset_control))[1],
+                              adjust.method="BH", coef = 1,  sort.by="p") 
+# length(rownames(toptable_control_completo)) 54675
+```
+
+Añadimos los nombres de los genes a todos los spots del microarray 
+
+```{r, warning = FALSE}
+
+# Using the aternatively method
+# if you wanted to extract only one column of data you could instead use themapIds method
+library("hgu133plus2.db")
+array_probenames <- as.character(rownames(toptable_control_completo))
+array_list.GeneSymbol <- as.list(mapIds(hgu133plus2.db, keys=array_probenames, column="SYMBOL", keytype = "PROBEID"))
+# Extraigo los nombres de los genes
+array_char.GeneSymbol <- as.character(array_list.GeneSymbol)
+
+# Añadimos al data frame la columna con los nombres de los genes
+array_toptable.annotated<-cbind(toptable_control_completo, array_char.GeneSymbol)
+
+# Change name column added
+colnames(array_toptable.annotated)[length(colnames(array_toptable.annotated))] <- "GeneSymbol"
+
+head(array_toptable.annotated)
+```
+
+Ahora sí, procedemos a realizar el vulcano plot. Extraemos primero las columnas de 
+interés para facilitar el manejo de los datos. 
+Seleccionamos los genes que muestran un P valor ajustado menor que 0.05 para ser coloreados y se plotean en función de su P valor. 
+
+En azul se encuentran los genes que se expresan con un log Fold Change superior a 1 en valor absoluto con un q-value < 0.05 (P valor ajustado). 
+En naranja los genes expresados con un Fold Change inferior a 1 en valor absoluto, pero con un q-value < 0.05. 
+
+```{r vulcano-control}
+# Extraemos columnas de interés
+vulcano_data <- subset(array_toptable.annotated, select = c("GeneSymbol", "logFC", "P.Value", "adj.P.Val"))
+
+# Cojo el mayor y menor valor de nuestros datos y le doy un margen
+min_value <- min(vulcano_data$logFC)-0.5
+max_value <- max(vulcano_data$logFC)+0.5
+# mis limites se generaran en función del valor más grande en valor absoluto 
+myxlim <- round(max( -min_value, max_value))
+
+# Make a basic volcano plot
+with(vulcano_data, plot(logFC, -log10(P.Value), pch=20,
+                        main="Volcano plot Control", 
+                        col = "lightgray",
+                        xlim=c(-myxlim, myxlim), 
+                        xaxp = c(-10, 10, 10), 
+                        yaxp = c(0, 15, 5))) 
+
+# Add colored points: red if adj.P.Val<0.05, orange of log2FC>1.5, green if both)
+with(subset(vulcano_data, adj.P.Val<.05), points(logFC, -log10(P.Value), pch=20, col="#fdae6b",))
+with(subset(vulcano_data, abs(logFC)>1), points(logFC, -log10(P.Value), pch=20, col="yellow"))
+with(subset(vulcano_data, adj.P.Val<.05 & abs(logFC)>1), points(logFC, -log10(P.Value), pch=20, col="#7fcdbb"))
+
+# which(genesymbols %in% "MYC") # 5191
+# which(genesymbols %in% "DTX1") # 9643
+# which(genesymbols %in% "HES1") # 812, 834, 45900
+genesymbols <- as.vector(vulcano_data$GeneSymbol)
+# Colour gene selected
+with(vulcano_data[c(which(genesymbols %in% "HES1"), 
+                    which(genesymbols %in% "MYC"),
+                    which(genesymbols %in% "DTX1"),
+                    which(genesymbols %in% "HES4")), ], 
+     points(logFC, -log10(P.Value), pch = 24, bg = "#de2d26", col = "black"))
+# Creamos un vector con tantos elementos vacios como spots 
+mylabels <- rep("", 54675)
+# Saco la lista de nombres de genes
+
+# Añadimos la etiqueta deseada en la posición deseada
+mylabels[which(genesymbols %in% "MYC")] <- "MYC"
+mylabels[which(genesymbols %in% "DTX1")] <- "DTX1"
+mylabels[which(genesymbols %in% "HES1")] <- "HES1"
+mylabels[which(genesymbols %in% "HES4")] <- "HES4"
+
+
+# Label points with the textxy function from the calibrate plot
+library(calibrate)
+with(subset(vulcano_data, adj.P.Val & abs(logFC)), textxy(logFC, -log10(P.Value), labs = mylabels, cex=0.8, font = 2))
+
+# Add limit dotted lines
+abline (v = 1, lty = 2 )
+abline (v = -1, lty = 2)
+# obtengo el P valor asociado al adj.P.valor < 0.05 empleado como corte
+abline (h = -log10(tail(vulcano_data[ vulcano_data$adj.P.Val < 0.05 , ]$adj.P.Val)), lty = 2)
+```
+
+
+
+```{r vulcano-control-num_diff}
+# Numero de genes sobre-expresados con p-valor ajustado < 0.05 y logFC > 1
+dim(vulcano_data[ vulcano_data$adj.P.Val < 0.05 & vulcano_data$logFC > 1 , ])
+
+# Numero de genes sub-expresados con p-valor ajustado < 0.05 y logFC < 1
+dim(vulcano_data[ vulcano_data$adj.P.Val < 0.05 & vulcano_data$logFC < -1 , ])
+```
+
+
+Podemos observar como todos los genes de interés estudiados en el paper se encuentran diferencialmente expresados (adj.P.value < 0.05), aunque no todos con un log Fold Change superior a 1. No obstante, con este gráfico podemos observar que hay diferencias bastante considerables entre ambas líneas celulares y, por tanto, que deben ser estudiadas por separado. 
+
+El gen HES1 presenta tres sondas dentro del microarray, y una de ellas se observa que no se encuentra diferencialmente expresada. Esta sonda podría corresponder a una de las isoformas del gen HES1, mostrándose así que las distintas isoformas de un gen presentan distintos niveles de expresión.
+
+## Clusterización
+
+Creo el archivo __.csv__ que emplearé para estudiar en Morpheus la clusterización jerarquizada y no jerarquizada.
+
+```{r cluster-control}
+# genes diferencialmente expresados
+diff_genes <- unique(rownames(vulcano_data[ vulcano_data$adj.P.Val < 0.05 , ] ))
+
+# length(diff_genes) # 20828
+exprseset_control_diff <- exprseset_control[rownames(exprseset_control) %in% diff_genes[0:35], ]
+
+# Cambiamos los nombres de las muestras
+colnames(exprseset_control_diff) <- c("KOPT-K1_01", "KOPT-K1_02", "KOPT-K1_03",
+                                                "HPB-ALL_01", "HPB-ALL_02", "HPB-ALL_03")
+
+# Nombre de los spots
+spots_control_diff <- rownames(exprseset_control_diff)
+
+spots_control_diff_list.GeneSymbol <- as.list(mapIds(hgu133plus2.db, keys=spots_control_diff, column="SYMBOL", keytype = "PROBEID"))
+spots_control_diff_char.GeneSymbol <- as.character(spots_control_diff_list.GeneSymbol)
+
+# Añadimos al data frame la columna con los nombres de los genes
+exprseset_control_diff.annotated<-cbind(exprseset_control_diff, spots_control_diff_char.GeneSymbol)
+
+# Change name column added
+colnames(exprseset_control_diff.annotated)[length(colnames(exprseset_control_diff.annotated))] <- "Description"
+
+
+# Reordering colnumns by positions. We want "Gene_names" as the second column
+
+exprseset_control_diff.annotated <-exprseset_control_diff.annotated[, c("Description", "KOPT-K1_01",
+                                                                        "KOPT-K1_02", "KOPT-K1_03",
+                                                                        "HPB-ALL_01", "HPB-ALL_02", 
+                                                                        "HPB-ALL_03")]
+head(exprseset_control_diff.annotated)
+
+write.csv(exprseset_control_diff.annotated, file = "Control_diff_top_35.csv")
+```
+
+
+# Lineas celulares estudiadas por separado
+
+## Línea celular KOPT-K1
+
+Los ficheros control son:
+
+* KOPT-K1_DMSO $\rightarrow$ "GSM455115.CEL", "GSM455116.CEL", "GSM455117.CEL"
+
+* KOPT-K1_SAHM1 $\rightarrow$ "GSM455121.CEL", "GSM455122.CEL", "GSM455123.CEL"
+
+
+### Cargamos los ficheros .CEL y extraemos el raw data
+
+```{r cargamos-ficheros-CEL-KOPT, warning=FALSE}
+
+# Read .CEL files 
+# data <- ReadAffy(filenames=targets$FileName)
+CELfiles_KOPT <- c("GSM455115.CEL", "GSM455116.CEL", "GSM455117.CEL", "GSM455121.CEL", "GSM455122.CEL", "GSM455123.CEL")
+
+rawdata_KOPT <- ReadAffy(filenames = CELfiles_KOPT)
+rawdata_KOPT
+```
+
+##  Análisis exploratorio de la calidad de los datos iniciales
+
+### Distribución de las intensidades antes de normalizar
+
+```{r Distribucion-intensidades-KOPT, message = FALSE, warning=FALSE}
+#########################
+# Intensity distributions
+#########################
+
+# Show intensity distributrions with hist function 
+hist(rawdata_KOPT, lty = rep(1, length(CELfiles_KOPT)), col = mycols,
+   main = "Intensity distributions KOPT-K1 Before Normalization" )
+
+# Add legend in the top right corner 
+legend("topright",  c("DMSO_01", "DMSO_02", "DMSO_03", "SAMH1_01", "SAMH1_02", "SAMH1_03"),
+       lty = rep(1, length(CELfiles_KOPT)), 
+       col = mycols,
+       cex = 1.3)
+```
+
+### Boxplot antes de normalizar
+
+```{r KOPT-boxplot_no_normalizado}
+#############################
+# boxplot antes de normalizar
+#############################
+
+boxplot(rawdata_KOPT,
+        main="Boxplot KOPT-K1 Before Normalization",
+        col = mycols,
+        names = c("DMSO_01", "DMSO_02", "DMSO_03", "SAMH1_01", "SAMH1_02", "SAMH1_03"), # sampleNames(rawdata_KOPT),
+        las = 2,  # vertical labels
+        cex.axis = 0.97, # size labels
+        yaxt = "n") # do not show y labels
+axis(2, cex.axis = 1.2) # plot y labels with higher size
+```
+
+Volvemos a observar la necesidad de normalizar los datos. 
+
+## Normalización con RMA
+
+```{r Normalizacion-RMA-KOPT}
+#4. Normalize with RMA 
+#generates object eset (class ExprSet), 
+#expresso function provides intensities in log scale
+eset_KOPT <- expresso(rawdata_KOPT,
+                 bg.correct = TRUE, 
+                 bgcorrect.method="rma", # corregir fondo
+                 normalize = TRUE, 
+                 normalize.method="quantiles", 
+                 pmcorrect.method="pmonly", # los que machean perfectamente
+                 summary.method="medianpolish", # resumeme por la mediana par aun mismo gen
+                 verbose = TRUE,
+) 
+```
+
+### Distribución de la intensidad tras la normalización 
+
+```{r KOPT-intensity-normalizado, message = FALSE}
+#########################
+# Intensity distributions
+#########################
+
+# Show intensity distributrions
+exprseset_KOPT <- as.data.frame(exprs(eset_KOPT)) # cojo las intensidades normalizadas
+dens_KOPT <- apply(data.frame(exprseset_KOPT), 2, density)
+
+plot(NA, xlim=range(sapply(dens_KOPT, "[", "x")), ylim=range(sapply(dens_KOPT, "[", "y")),
+     main = "Intensity distributions KOPT-K1 After Normalization",
+     xlab = "log intensity", ylab = "density")
+distribution_KOPT <- mapply(lines, dens_KOPT, 
+                            col=c(rep(mycols[1], 3), rep(mycols[4], 3)), lwd = 1)
+
+# Add legend in the top right corner
+legend("topright", legend= c("DMSO_01", "DMSO_02", "DMSO_03", "SAMH1_01", "SAMH1_02", "SAMH1_03")
+         , lty = rep(1, length(CELfiles_KOPT)), col = mycols, cex = 1.3)
+```
+
+### Boxplots tras la normalización
+
+```{r KOPT-boxplot-normalizado}
+# boxplot de todos los genes después de normalizar
+boxplot(data.frame(exprseset_KOPT),
+        main="Boxplot KOPT-K1 After Normalization (log scale)",
+        col = mycols,
+        names =c("DMSO_01", "DMSO_02", "DMSO_03", "SAMH1_01", "SAMH1_02", "SAMH1_03"), # sampleNames(rawdata_KOPT),
+        las = 2,  # vertical labels
+        cex.axis = 0.97, # size labels
+        yaxt = "n") # do not show y labels
+axis(2, cex.axis = 1.2) # plot y labels with higher size
+```
+
+### Scatter plot tras la normalización
+
+```{r KOPT-scatter-plot-normalizado}
+
+# Note that the original eset object contains the log2-transformed gene intensities
+intens_KOPT = 2^exprseset_KOPT # transform from log2 to normal intensity
+
+# Create reference median array for each cell line to compare
+# median intensity for KOPT-K1 control DMSO
+intens_KOPT_DMSO = apply(intens_KOPT[, c(1, 2, 3)], 1, median)
+# median intensity for HPB-ALL control DMSO
+intens_KOPT_SAHM1 = apply(intens_KOPT[, c(4, 5, 6)], 1, median)
+
+plot(intens_KOPT_DMSO, intens_KOPT_SAHM1, cex = 1, 
+     pch = 19, col = "mediumaquamarine",
+     xlab = "KOPT-K1_DMSO",
+     ylab = "KOPT-K1_SAHM1",
+     main = "Cell lines KOPT-K1 expression level after normalization")
+
+abline(a = 0,
+       b = (max(intens_KOPT_SAHM1) / max(intens_KOPT_DMSO)), col = "red",
+       lwd = 2)
+
+```
+
+### MA-plot tras la normalización
+
+```{r MA-plot-KOPT-normalizacion}
+A <- 1/2*log2(intens_KOPT_SAHM1*intens_KOPT_DMSO)
+M <- log2(intens_KOPT_SAHM1/intens_KOPT_DMSO)
+plot(A, M, cex = 0.75, pch = 19, col = "steelblue", 
+     main = "Cell lines KOPT-K1 expression level after normalization")
+
+abline(h = 0, col = "red", lty = 1, lwd = 2)
+```
+
+Vemos que hay muchos genes subregulados en el tratamiento con SAHM1 con respecto al tratamiento 
+control con DMSO. 
+
+### PCA
+
+```{r PCA-KOPT}
+PCA_g <- prcomp(t(exprs(eset_KOPT)))
+rownames(PCA_g$x) <- c("DMSO_01", "DMSO_02", "DMSO_03", "SAMH1_01", "SAMH1_02", "SAMH1_03")
+summary(PCA_g)
+pc_dat<- data.frame(type = rownames(PCA_g$x), PC1 = PCA_g$x[,1], PC2=PCA_g$x[,2])
+library(ggplot2)
+ggplot(pc_dat,aes(x=PC1, y=PC2, col=type)) + geom_point(size = 5) + theme(
+  legend.title = element_text(color = "black", size = 14),
+  legend.text = element_text(color = "black" , size = 14),
+  axis.text=element_text(size=12),
+  axis.title=element_text(size=14,face="bold")) + xlab("PC1 (55.78%)") + ylab("PC2 (13.43%)") +
+  ggtitle("PCA KOPT-K1 cell line")
+```
+
+
+
+### Filtro del rango intercuartílico
+
+```{r KOPT-K1-IQR}
+# boxplot de solo los genes normalizados con un ranog intercuartílico superior a 0.5 para que tengan variabilidad
+esetIQR_KOPT <- varFilter(eset_KOPT, var.func=IQR, var.cutoff=0.5, filterByQuantile=TRUE)
+
+## Comprobamos el filtro del rango intercuartílico
+dim(exprs(eset_KOPT))
+dim(exprs(esetIQR_KOPT))
+
+
+
+# boxplot de solo los genes normalizados con un ranog intercuartílico superior a 0.5 para que tengan variabilidad
+exprsesetIQR_KOPT <- as.data.frame(exprs(esetIQR_KOPT))
+
+boxplot(data.frame(exprsesetIQR_KOPT),
+        main="Boxplot KOPT-K1 After Normalization and IQR filter (log scale)",
+        col = mycols,
+        names = sampleNames(rawdata_KOPT),
+        las = 2,  # vertical labels
+        cex.axis = 0.6, # size labels
+        yaxt = "n") # do not show y labels
+axis(2, cex.axis = 1) # plot y labels with higher size
+```
+
+
+## Expresión diferencial
+
+### Análisis estadístico
+
+Generamos la matriz donde guardaremos el diseño experimental que empleará _makeContrast_ 
+para realizar la comparación de niveles de transcripción. A cada archivo .CEL 
+le asigno un número en función del tratamiento y línea celular.
+
+* KOPT-K1_DMSO $\rightarrow$ 1
+
+* KOPT-K1_SAHM1 $\rightarrow$ 2
+
+
+```{r}
+
+# Generamos la matriz de diseño experimental
+design_KOPT <- model.matrix(~ 0+factor(c(1,1,1,2,2,2)))
+rownames(design_KOPT)<-sampleNames(rawdata_KOPT)
+colnames(design_KOPT) <- c("KOPT_DMSO", "KOPT_SAHM1")
+
+# Mostramos la matriz de diseño experimental
+design_KOPT
+```
+
+Realizamos el ajuste de cada grupo a una recta y realizamos el estudio de expresión diferencial empleando 
+la función *makeContrast*
+
+```{r}
+## ajustamos cada nube de puntos correspondiente a cada grupo a una recta
+fit_KOPT <- lmFit(esetIQR_KOPT, design_KOPT)
+
+## establecemos las comparaciones que queremos realizar
+## Tenemos que dividir entre 2 para que tengan todos el mismo peso. Las dos últimas no tienen ningún sentido
+contrast.matrix_KOPT <- makeContrasts(KOPT_SAHM1 - KOPT_DMSO, levels=design_KOPT)
+
+## comparamos las regresiones lineales según el patrón de contraste pedido
+fit2_KOPT <- contrasts.fit(fit_KOPT, contrast.matrix_KOPT)
+
+fit2_KOPT <- eBayes(fit2_KOPT)
+```
+
+
+
+```{r}
+#Table with DEGs results number te cogerá todos los genes (filas) que tenia esetIQR
+
+toptableIQR_KOPT<-topTable(fit2_KOPT, number=dim(exprs(esetIQR_KOPT))[1],
+                              adjust.method="BH", coef = 1,  sort.by="p") 
+# para poder ordenar por "p" necesito poner el coeficiente, es decir, que sepa que comparación debe coger
+
+head(toptableIQR_KOPT)
+dim((toptableIQR_KOPT))
+```
+
+Ahora quiero quedarme solo con los genes que cumplan un FDR<0.05 (adjusted P-value)
+
+```{r}
+
+# Data frame with the values of the spot
+KOPT.fdr.005.table<-subset(toptableIQR_KOPT, 
+                              toptableIQR_KOPT$adj.P.Val<=0.05)
+dim(KOPT.fdr.005.table)
+summary(KOPT.fdr.005.table) ##  Check the maximum adj.P.val is < 0.05
+```
+
+
+Hemos pasado de 54675 genes iniciales a 27337 tras el filtro IR y, finalmente,
+a 7765 genes tras el filtro de FDR. 
+
+
+## Incorporación de los nombres de los genes
+
+### Método 1
+Queremos incorporar anotaciones a *KOPT.fdr.005.table*
+
+```{r, message=FALSE, results=FALSE, warning=FALSE}
+library("hgu133plus2.db")
+```
+
+```{r anotacion-metodo-1-KOPT}
+# Recuperamos los nombres de las sondas de los diferentes spots del microarray
+KOPT_probenames.fdr.005<-as.character(rownames(KOPT.fdr.005.table))
+head(KOPT_probenames.fdr.005)
+
+# Recuperamos la lista de genes asociados a las diferentes sondas del microarray
+KOPT_list.GeneSymbol.fdr.005<-mget(KOPT_probenames.fdr.005, hgu133plus2SYMBOL)
+head(KOPT_list.GeneSymbol.fdr.005)
+
+# ahora mostrmos solo los nombres de los genes
+KOPT_char.GeneSymbol.fdr.005<- as.character(KOPT_list.GeneSymbol.fdr.005)
+head(KOPT_char.GeneSymbol.fdr.005)
+
+# Añadimos al data frame la columna con los nombres de los genes
+KOPT_toptable.annotated<-cbind(KOPT.fdr.005.table, KOPT_char.GeneSymbol.fdr.005)
+head(KOPT_toptable.annotated)
+```
+
+Pero antes, veamos si están estos genes *HES1, MYC, DTX1* entre los genes
+diferencialmente expresados:
+```{r}
+# Busco si los genes del artículo se encuentran entre los genes diferencialmente expresados
+"HES1" %in% unique(KOPT_toptable.annotated$KOPT_char.GeneSymbol.fdr.005)
+"MYC" %in% unique(KOPT_toptable.annotated$KOPT_char.GeneSymbol.fdr.005)
+"DTX1" %in% unique(KOPT_toptable.annotated$KOPT_char.GeneSymbol.fdr.005)
+"HES4" %in% unique(KOPT_toptable.annotated$KOPT_char.GeneSymbol.fdr.005)
+```
+
+
+La importancia de estos genes es mejor verla con un GSEA, porque con un análisis
+estadístico no podemos entender bien el contexto biológico de estos genes
+expresados diferencialmente. Es precisamente su limitación, detectamos bien los
+genes expresados diferencialmente, pero nos falta la interpretación biológica. 
+Para ello realizaremos 
+
+
+### Vulcano plot
+
+```{r estadistico-array-completo-KOPT}
+## ajustamos cada nube de puntos correspondiente a cada grupo a una recta
+fit_KOPT_completo <- lmFit(eset_KOPT, design_KOPT)
+
+## establecemos las comparaciones que queremos realizar
+## Tenemos que dividir entre 2 para que tengan todos el mismo peso. Las dos últimas no tienen ningún sentido
+contrast.matrix_completo_KOPT <- makeContrasts(KOPT_SAHM1- KOPT_DMSO , levels=design_KOPT)
+
+## comparamos las regresiones lineales según el patrón de contraste pedido
+fit2_KOPT_completo <- contrasts.fit(fit_KOPT_completo, contrast.matrix_completo_KOPT)
+
+fit2_KOPT_completo<-eBayes(fit2_KOPT_completo )
+
+#Table with DEGs results number te cogerá todos los genes (filas) que tenia esetIQR
+
+toptable_KOPT_completo <-topTable(fit2_KOPT_completo, number=dim(exprs(eset_KOPT))[1],
+                              adjust.method="BH", coef = 1,  sort.by="p") 
+```
+
+Añadimos los nombres de los genes a todos los spots del microarray 
+
+```{r, warning = FALSE}
+
+# Using the aternatively method
+# if you wanted to extract only one column of data you could instead use themapIds method
+library("hgu133plus2.db")
+array_probenames <- as.character(rownames(toptable_KOPT_completo))
+array_list.GeneSymbol <- as.list(mapIds(hgu133plus2.db, keys=array_probenames, column="SYMBOL", keytype = "PROBEID"))
+# Extraigo los nombres de los genes
+array_char.GeneSymbol <- as.character(array_list.GeneSymbol)
+
+# Añadimos al data frame la columna con los nombres de los genes
+array_toptable.annotated<-cbind(toptable_KOPT_completo, array_char.GeneSymbol)
+
+# Change name column added
+colnames(array_toptable.annotated)[length(colnames(array_toptable.annotated))] <- "GeneSymbol"
+
+head(array_toptable.annotated)
+```
+
+Ahora sí, procedemos a realizar el vulcano plot. Extraemos primero las columnas de 
+interés para facilitar el manejo de los datos. 
+Seleccionamos los genes que muestran un P valor ajustado menor que 0.05 para ser coloreados y se plotean en función de su P valor. 
+
+En azul se encuentran los genes que se expresan con un log Fold Change superior a 1 en valor absoluto con un q-value < 0.05 (P valor ajustado). 
+En naranja los genes expresados con un Fold Change inferior a 1 en valor absoluto, pero con un q-value < 0.05. 
+
+```{r vulcano-KOPT}
+# Extraemos columnas de interés
+vulcano_data <- subset(array_toptable.annotated, select = c("GeneSymbol", "logFC", "P.Value", "adj.P.Val"))
+
+# Cojo el mayor y menor valor de nuestros datos y le doy un margen
+min_value <- min(vulcano_data$logFC)-0.5
+max_value <- max(vulcano_data$logFC)+0.5
+# mis limites se generaran en función del valor más grande en valor absoluto 
+myxlim <- round(max( -min_value, max_value))
+
+# Make a basic volcano plot
+with(vulcano_data, plot(logFC, -log10(adj.P.Val), pch=20,
+                        main="Volcano plot KOPT-K1", 
+                        col = "lightgray",
+                        xlim=c(-myxlim, myxlim), 
+                        xaxp = c(-5, 5, 10), 
+                        yaxp = c(0, 15, 5),
+                        cex = 1)) 
+
+# Add colored points: red if adj.P.Val<0.05, orange of log2FC>1.5, green if both)
+with(subset(vulcano_data, adj.P.Val<.05), points(logFC, -log10(adj.P.Val), pch=20, col="#fdae6b", cex = 1))
+with(subset(vulcano_data, abs(logFC)>0.5), points(logFC, -log10(adj.P.Val), pch=20, col="yellow", cex = 1))
+with(subset(vulcano_data, adj.P.Val<.05 & abs(logFC)>0.5), points(logFC, -log10(adj.P.Val), pch=20, col="#7fcdbb", cex = 1))
+
+# which(genesymbols %in% "MYC") # 5191
+# which(genesymbols %in% "DTX1") # 9643
+# which(genesymbols %in% "HES1") # 812, 834, 45900
+genesymbols <- as.vector(vulcano_data$GeneSymbol)
+# Colour gene selected
+with(vulcano_data[c(which(genesymbols %in% "HES1"), 
+                    which(genesymbols %in% "MYC"),
+                    which(genesymbols %in% "DTX1"),
+                    which(genesymbols %in% "HES4")), ], 
+     points(logFC, -log10(adj.P.Val), pch = 24, bg = "#de2d26", col = "black", cex = 1))
+# Creamos un vector con tantos elementos vacios como spots 
+mylabels <- rep("", 54675)
+# Saco la lista de nombres de genes
+
+# Añadimos la etiqueta deseada en la posición deseada
+mylabels[which(genesymbols %in% "MYC")] <- "MYC"
+mylabels[which(genesymbols %in% "DTX1")] <- "DTX1"
+mylabels[which(genesymbols %in% "HES1")] <- "HES1"
+
+mylabels[which(genesymbols %in% "HES4")] <- "HES4"
+
+
+# Label points with the textxy function from the calibrate plot
+library(calibrate)
+with(subset(vulcano_data, adj.P.Val & abs(logFC)), textxy(logFC, -log10(adj.P.Val), labs = mylabels, cex=0.8, font = 2))
+
+# Add limit dotted lines
+abline (v = 0.5, lty = 2 )
+abline (v = -0.5, lty = 2)
+# obtengo el P valor asociado al adj.P.valor < 0.05 empleado como corte
+abline (h = -log10(tail(vulcano_data[ vulcano_data$adj.P.Val < 0.05 , ]$adj.P.Val)), lty = 2)
+```
+
+
+
+```{r vulcano-KOPT-num_diff}
+# Numero de genes sobre-expresados con p-valor ajustado < 0.05 y logFC > 1
+dim(vulcano_data[ vulcano_data$adj.P.Val < 0.05 & vulcano_data$logFC > 0.5 , ])
+
+# Numero de genes sub-expresados con p-valor ajustado < 0.05 y logFC < 1
+dim(vulcano_data[ vulcano_data$adj.P.Val < 0.05 & vulcano_data$logFC < -0.5, ])
+```
+
+## Clusterizacion
+
+Creamos los archivos para la clusterización para Morpheus
+
+```{r KOPT_cluster}
+
+# genes diferencialmente expresados
+diff_genes <- unique(rownames(vulcano_data[ vulcano_data$adj.P.Val < 0.05 , ] ))
+
+# length(diff_genes) # 20828
+exprseset_KOPT_diff <- exprseset_KOPT[rownames(exprseset_control) %in% diff_genes, ]
+
+# Cambiamos los nombres de las muestras
+colnames(exprseset_KOPT_diff) <- c("DMSO_01", "DMSO_02", "DMSO_03", "SAMH1_01", "SAMH1_02", "SAMH1_03")
+
+# Nombre de los spots
+spots_KOPT_diff <- rownames(exprseset_KOPT_diff)
+
+spots_KOPT_diff_list.GeneSymbol <- as.list(mapIds(hgu133plus2.db, keys=spots_KOPT_diff, column="SYMBOL", keytype = "PROBEID"))
+spots_KOPT_diff_char.GeneSymbol <- as.character(spots_KOPT_diff_list.GeneSymbol)
+
+# Añadimos al data frame la columna con los nombres de los genes
+exprseset_KOPT_diff.annotated<-cbind(exprseset_KOPT_diff, spots_KOPT_diff_char.GeneSymbol)
+
+# Change name column added
+colnames(exprseset_KOPT_diff.annotated)[length(colnames(exprseset_KOPT_diff.annotated))] <- "Description"
+
+
+# Reordering colnumns by positions. We want "Gene_names" as the second column
+
+exprseset_KOPT_diff.annotated <-exprseset_KOPT_diff.annotated[, c("Description", "DMSO_01", "DMSO_02", "DMSO_03", 
+                                                                  "SAMH1_01", "SAMH1_02", "SAMH1_03")]
+head(exprseset_KOPT_diff.annotated$Description)
+
+# write.csv(exprseset_KOPT_diff.annotated, file = "KOPT_diff_top_35.csv")
+```
+
+## Análisis funcional: PANTHER y Babelomics
+
+Creamos la lista de genes que emplearemos en el análisis funcional con PANTHER y Babelomics 5.0. 
+
+```{r}
+# Genes sub-expresados
+KOPT_sub <- vulcano_data[ vulcano_data$adj.P.Val < 0.05 
+                          & vulcano_data$logFC < -0.5, ]
+# Eliminamos los NA y seleccionamos los 170 top de la 1 columna (GENESYMBOL)
+KOPT_sub <- KOPT_sub[complete.cases(KOPT_sub), ][0:170, 1] 
+# exprseset_KOPT_diff.annotated$Description[complete.cases(exprseset_KOPT_diff.annotated$Description)]
+write.csv(KOPT_sub, file = "KOPT_sub_170.csv",
+          row.names = FALSE)
+
+# Genes sobre-expresados
+KOPT_over <- vulcano_data[ vulcano_data$adj.P.Val < 0.05 &
+                             vulcano_data$logFC > 0.5 , ]
+
+# Eliminamos los NA y seleccionamos los 170 top de la 1 columna (GENESYMBOL)
+KOPT_over <- KOPT_over[complete.cases(KOPT_over), ][0:170, 1]
+write.csv(KOPT_over, file = "KOPT_over_170.csv",
+          row.names = FALSE)
+```
+
+
+## Línea celular HPB-ALL
+
+* HPB-ALL_DMSO $\rightarrow$ "GSM455118.CEL", "GSM455119.CEL", "GSM455120.CEL"
+
+* HPB-ALL_SAHM1 $\rightarrow$ "GSM455124.CEL", "GSM455125.CEL", "GSM455126.CEL"
+
+## Cargamos los ficheros .CEL y extraemos el raw data
+
+```{r cargamos-ficheros-CEL-HPB, warning=FALSE}
+
+# Read .CEL files 
+# data <- ReadAffy(filenames=targets$FileName)
+CELfiles_HPB <- c("GSM455118.CEL", "GSM455119.CEL", "GSM455120.CEL", "GSM455124.CEL", "GSM455125.CEL", "GSM455126.CEL")
+
+rawdata_HPB <- ReadAffy(filenames = CELfiles_HPB)
+rawdata_HPB
+```
+
+##  Análisis exploratorio de la calidad de los datos iniciales
+
+### Distribución de las intensidades antes de normalizar
+
+```{r Distribucion-intensidades-HPB, message = FALSE, warning=FALSE}
+#########################
+# Intensity distributions
+#########################
+
+# Show intensity distributrions with hist function 
+hist(rawdata_HPB, lty = rep(1, length(CELfiles_KOPT)), col = mycols,
+   main = "Intensity distributions HPB-ALL Before Normalization")
+
+# Add legend in the top right corner 
+legend("topright", c("DMSO_01", "DMSO_02", "DMSO_03", 
+                              "SAMH1_01", "SAMH1_02", "SAMH1_03"),
+       lty = rep(1, length(CELfiles_HPB)), 
+       col = mycols,
+       cex = 1.2)
+```
+
+### Boxplot antes de normalizar
+
+```{r boxplot-HPB_no-normalizado}
+#############################
+# boxplot antes de normalizar
+#############################
+
+boxplot(rawdata_HPB,
+        main="Boxplot HPB-ALL Before Normalization",
+        col = mycols,
+        names =  c("DMSO_01", "DMSO_02", "DMSO_03", 
+                              "SAMH1_01", "SAMH1_02", "SAMH1_03"),
+        las = 2,  # vertical labels
+        cex.axis = 0.97, # size labels
+        yaxt = "n") # do not show y labels
+axis(2, cex.axis = 1.2) # plot y labels with higher size
+```
+
+
+## Normalización con RMA
+
+
+
+```{r Normalizacion-RMA-HPB}
+eset_HPB <- expresso(rawdata_HPB,
+                 bg.correct = TRUE, 
+                 bgcorrect.method="rma", # corregir fondo
+                 normalize = TRUE, 
+                 normalize.method="quantiles", 
+                 pmcorrect.method="pmonly", # los que machean perfectamente
+                 summary.method="medianpolish", # resumeme por la mediana par aun mismo gen
+                 verbose = TRUE,
+)
+```
+
+
+
+### Distribución de la intensidad tras la normalización 
+
+```{r HPB-intensity-normalizado, message = FALSE}
+#########################
+# Intensity distributions
+#########################
+
+# Show intensity distributrions
+exprseset_HPB <- as.data.frame(exprs(eset_HPB)) # cojo las intensidades normalizadas
+dens_HPB <- apply(data.frame(exprseset_HPB), 2, density)
+
+plot(NA, xlim=range(sapply(dens_HPB, "[", "x")), ylim=range(sapply(dens_HPB, "[", "y")),
+     main = "Intensity distributions HPB-ALL After Normalization",
+     xlab = "log intensity", ylab = "density")
+distribution_HPB <- mapply(lines, dens_HPB, col=c(rep(mycols[1], 3), rep(mycols[4], 3)), lwd = 1)
+
+# Add legend in the top right corner
+legend("topright", legend= c("DMSO_01", "DMSO_02", "DMSO_03", 
+                              "SAMH1_01", "SAMH1_02", "SAMH1_03"),
+       lty = rep(1, length(CELfiles_HPB)), col = mycols, cex = 1.2)
+```
+
+### Boxplots tras la normalización
+
+```{r HPB-boxplot-normalizado}
+# boxplot de todos los genes después de normalizar
+boxplot(data.frame(exprseset_HPB),
+        main="Boxplot HPB-ALL After Normalization (log scale)",
+        col = mycols,
+        names =  c("DMSO_01", "DMSO_02", "DMSO_03", 
+                              "SAMH1_01", "SAMH1_02", "SAMH1_03"),
+        las = 2,  # vertical labels
+        cex.axis = 0.97, # size labels
+        yaxt = "n") # do not show y labels
+axis(2, cex.axis = 1) # plot y labels with higher size
+```
+
+### Scatter-plot y MA-plot tras la normalización
+
+```{r HPB-scatter-plot-normalizado}
+
+# Note that the original eset object contains the log2-transformed gene intensities
+intens_HPB = 2^exprseset_HPB # transform from log2 to normal intensity
+
+# Create reference median array for each cell line to compare
+# median intensity for KOPT-K1 control DMSO
+intens_HPB_DMSO = apply(intens_HPB[, c(1, 2, 3)], 1, median)
+# median intensity for HPB-ALL control DMSO
+intens_HPB_SAHM1 = apply(intens_HPB[, c(4, 5, 6)], 1, median)
+
+plot(intens_HPB_DMSO, intens_HPB_SAHM1, cex = 1, 
+     pch = 19, col = "mediumaquamarine",
+     xlab = "HPB-ALL_DMSO",
+     ylab = "HPB-ALL_SAHM1",
+     main = "Cell lines HPB-ALL expression level after normalization")
+
+abline(a = 0,
+       b = (max(intens_HPB_SAHM1) / max(intens_HPB_DMSO)), col = "red",
+       lwd = 2)
+
+```
+
+```{r MA-plot-HPB-normalizacion}
+A <- 1/2*log2(intens_HPB_SAHM1*intens_HPB_DMSO)
+M <- log2(intens_HPB_SAHM1/intens_HPB_DMSO)
+plot(A, M, cex = 0.75, pch = 19, col = "steelblue", 
+     main = "Cell lines HPB-ALL expression level after normalization")
+
+abline(h = 0, col = "red", lty = 1, lwd = 2)
+```
+
+En esta línea celular vemos que hay genes subregulados y sobre regulados en la línea SAHM1 con 
+respecto el control. 
+
+### PCA
+
+```{r}
+PCA_g <- prcomp(t(exprs(eset_HPB)))
+rownames(PCA_g$x) <- c("DMSO_01", "DMSO_02", "DMSO_03", 
+                              "SAMH1_01", "SAMH1_02", "SAMH1_03")
+summary(PCA_g)
+pc_dat<- data.frame(type = rownames(PCA_g$x), PC1 = PCA_g$x[,1], PC2=PCA_g$x[,2])
+library(ggplot2)
+ggplot(pc_dat,aes(x=PC1, y=PC2, col=type)) + geom_point(size = 5) + theme(
+  legend.title = element_text(color = "black", size = 14),
+  legend.text = element_text(color = "black" , size = 14),
+  axis.text=element_text(size=12),
+  axis.title=element_text(size=14,face="bold")) + xlab("PC1 (52%)") + ylab("PC2 (16%)") +
+  ggtitle("PCA HPB-ALL cell lines")
+```
+
+### Filtro del rango intercuartílico
+
+```{r HPB-K1-IQR}
+# boxplot de solo los genes normalizados con un ranog intercuartílico superior a 0.5 para que tengan variabilidad
+esetIQR_HPB <- varFilter(eset_HPB, var.func=IQR, var.cutoff=0.5, filterByQuantile=TRUE)
+
+## Comprobamos el filtro del rango intercuartílico
+dim(exprs(eset_HPB))
+dim(exprs(esetIQR_HPB))
+
+# boxplot de solo los genes normalizados con un ranog intercuartílico superior a 0.5 para que tengan variabilidad
+exprsesetIQR_HPB <- as.data.frame(exprs(esetIQR_HPB))
+
+boxplot(data.frame(exprsesetIQR_HPB),
+        main="Boxplot HPB-ALL After Normalization and IQR filter (log scale)",
+        col = mycols,
+        names = sampleNames(rawdata_HPB),
+        las = 2,  # vertical labels
+        cex.axis = 0.6, # size labels
+        yaxt = "n") # do not show y labels
+axis(2, cex.axis = 1) # plot y labels with higher size
+```
+
+
+## Expresión diferencial 
+
+### Análisis estadístico
+
+Generamos la matriz donde guardaremos el diseño experimental que empleará _makeContrast_ 
+para realizar la comparación de niveles de transcripción. A cada archivo .CEL 
+le asigno un número en función del tratamiento y línea celular.
+
+* HPB-ALL_DMSO $\rightarrow$ 1
+
+* HPB-ALL_SAHM1 $\rightarrow$ 2
+
+
+```{r}
+
+# Generamos la matriz de diseño experimental
+design_HPB <- model.matrix(~ 0+factor(c(1,1,1,2,2,2)))
+rownames(design_HPB)<-sampleNames(rawdata_HPB)
+colnames(design_HPB) <- c("HPB_DMSO", "HPB_SAHM1")
+
+# Mostramos la matriz de diseño experimental
+design_HPB
+```
+
+Realizamos el ajuste de cada grupo a una recta y realizamos el estudio de expresión diferencial empleando 
+la función *makeContrast*
+
+```{r}
+## ajustamos cada nube de puntos correspondiente a cada grupo a una recta
+fit_HPB <- lmFit(esetIQR_HPB, design_HPB)
+
+## establecemos las comparaciones que queremos realizar
+## Tenemos que dividir entre 2 para que tengan todos el mismo peso. Las dos últimas no tienen ningún sentido
+contrast.matrix_HPB <- makeContrasts(HPB_SAHM1 - HPB_DMSO, levels=design_HPB)
+
+## comparamos las regresiones lineales según el patrón de contraste pedido
+fit2_HPB <- contrasts.fit(fit_HPB, contrast.matrix_HPB)
+
+fit2_HPB <- eBayes(fit2_HPB)
+```
+
+
+
+
+```{r}
+#Table with DEGs results number te cogerá todos los genes (filas) que tenia esetIQR
+
+toptableIQR_HPB<-topTable(fit2_HPB, number=dim(exprs(esetIQR_HPB))[1],
+                              adjust.method="BH", coef = 1,  sort.by="p") 
+# para poder ordenar por "p" necesito poner el coeficiente, es decir, que sepa que comparación debe coger
+
+head(toptableIQR_HPB)
+dim((toptableIQR_HPB))
+```
+
+Ahora quiero quedarme solo con los genes que cumplan un FDR<0.05 (adjusted P-value)
+
+```{r}
+# Data frame with the values of the spot
+HPB.fdr.005.table<-subset(toptableIQR_HPB, 
+                              toptableIQR_HPB$adj.P.Val<=0.05)
+dim(HPB.fdr.005.table)
+summary(HPB.fdr.005.table) ##  Check the maximum adj.P.val is < 0.05
+```
+
+
+Hemos pasado de 54675 genes iniciales a 27337 tras el filtro IR y, finalmente,
+a 2105 genes tras el filtro de FDR. 
+
+
+## Incorporación de los nombres de los genes
+
+Queremos incorporar anotaciones a *HPB.fdr.005.table*
+
+```{r, message=FALSE, results=FALSE, warning=FALSE}
+library("hgu133plus2.db")
+```
+
+```{r anotacion-metodo-1-HPB}
+# Recuperamos los nombres de las sondas de los diferentes spots del microarray
+HPB_probenames.fdr.005<-as.character(rownames(HPB.fdr.005.table))
+head(HPB_probenames.fdr.005)
+
+# Recuperamos la lista de genes asociados a las diferentes sondas del microarray
+HPB_list.GeneSymbol.fdr.005<-mget(HPB_probenames.fdr.005, hgu133plus2SYMBOL)
+head(HPB_list.GeneSymbol.fdr.005)
+
+# ahora mostrmos solo los nombres de los genes
+HPB_char.GeneSymbol.fdr.005<- as.character(HPB_list.GeneSymbol.fdr.005)
+head(HPB_char.GeneSymbol.fdr.005)
+
+# Añadimos al data frame la columna con los nombres de los genes
+HPB_toptable.annotated<-cbind(HPB.fdr.005.table, HPB_char.GeneSymbol.fdr.005)
+head(HPB_toptable.annotated)
+```
+
+### Vulcano plot
+
+```{r estadistico-array-completo-HPB}
+## ajustamos cada nube de puntos correspondiente a cada grupo a una recta
+fit_HPB_completo <- lmFit(eset_HPB, design_HPB)
+
+## establecemos las comparaciones que queremos realizar
+contrast.matrix_completo_HPB <- makeContrasts(HPB_SAHM1- HPB_DMSO , levels=design_HPB)
+
+## comparamos las regresiones lineales según el patrón de contraste pedido
+fit2_HPB_completo <- contrasts.fit(fit_HPB_completo, contrast.matrix_completo_HPB)
+
+fit2_HPB_completo<-eBayes(fit2_HPB_completo )
+
+#Table with DEGs results number te cogerá todos los genes (filas) que tenia esetIQR
+
+toptable_HPB_completo <-topTable(fit2_HPB_completo, number=dim(exprs(eset_HPB))[1],
+                              adjust.method="BH", coef = 1,  sort.by="p") 
+```
+
+Añadimos los nombres de los genes a todos los spots del microarray 
+
+```{r, warning = FALSE}
+
+# Using the aternatively method
+# if you wanted to extract only one column of data you could instead use themapIds method
+library("hgu133plus2.db")
+array_probenames <- as.character(rownames(toptable_HPB_completo))
+array_list.GeneSymbol <- as.list(mapIds(hgu133plus2.db, keys=array_probenames, column="SYMBOL", keytype = "PROBEID"))
+# Extraigo los nombres de los genes
+array_char.GeneSymbol <- as.character(array_list.GeneSymbol)
+
+# Añadimos al data frame la columna con los nombres de los genes
+array_toptable.annotated<-cbind(toptable_HPB_completo, array_char.GeneSymbol)
+
+# Change name column added
+colnames(array_toptable.annotated)[length(colnames(array_toptable.annotated))] <- "GeneSymbol"
+
+head(array_toptable.annotated)
+```
+
+Ahora sí, procedemos a realizar el vulcano plot. Extraemos primero las columnas de 
+interés para facilitar el manejo de los datos. 
+Seleccionamos los genes que muestran un P valor ajustado menor que 0.05 para ser coloreados y se plotean en función de su P valor. 
+
+En azul se encuentran los genes que se expresan con un log Fold Change superior a 1 en valor absoluto con un q-value < 0.05 (P valor ajustado). 
+En naranja los genes expresados con un Fold Change inferior a 1 en valor absoluto, pero con un q-value < 0.05. 
+
+```{r vulcano-HPB}
+# Extraemos columnas de interés
+vulcano_data <- subset(array_toptable.annotated, select = c("GeneSymbol", "logFC", "P.Value", "adj.P.Val"))
+
+# Cojo el mayor y menor valor de nuestros datos y le doy un margen
+min_value <- min(vulcano_data$logFC)-0.5
+max_value <- max(vulcano_data$logFC)+0.5
+# mis limites se generaran en función del valor más grande en valor absoluto 
+myxlim <- round(max( -min_value, max_value))
+
+# Make a basic volcano plot
+with(vulcano_data, plot(logFC, -log10(adj.P.Val), pch=20,
+                        main="Volcano plot HPB-ALL", 
+                        col = "lightgray",
+                        xlim=c(-myxlim, myxlim), 
+                        xaxp = c(-5, 5, 10), 
+                        yaxp = c(0, 4, 4),
+                        cex = 1)) 
+
+# Add colored points: red if adj.P.Val<0.05, orange of log2FC>1.5, green if both)
+with(subset(vulcano_data, adj.P.Val<.05), points(logFC, -log10(adj.P.Val), pch=20, col="#fdae6b", cex = 1))
+with(subset(vulcano_data, abs(logFC)>0.5), points(logFC, -log10(adj.P.Val), pch=20, col="yellow", cex = 1))
+with(subset(vulcano_data, adj.P.Val<.05 & abs(logFC)>0.5), points(logFC, -log10(adj.P.Val), pch=20, col="#7fcdbb", cex = 1))
+
+# which(genesymbols %in% "MYC") # 5191
+# which(genesymbols %in% "DTX1") # 9643
+# which(genesymbols %in% "HES1") # 812, 834, 45900
+genesymbols <- as.vector(vulcano_data$GeneSymbol)
+# Colour gene selected
+with(vulcano_data[c(which(genesymbols %in% "HES1"), 
+                    which(genesymbols %in% "MYC"),
+                    which(genesymbols %in% "DTX1"),
+                    which(genesymbols %in% "HES4")), ], 
+     points(logFC, -log10(adj.P.Val), pch = 24, bg = "#de2d26", col = "black", cex = 1))
+# Creamos un vector con tantos elementos vacios como spots 
+mylabels <- rep("", 54675)
+# Saco la lista de nombres de genes
+
+# Añadimos la etiqueta deseada en la posición deseada
+mylabels[which(genesymbols %in% "MYC")] <- "MYC"
+mylabels[which(genesymbols %in% "DTX1")] <- "DTX1"
+mylabels[which(genesymbols %in% "HES1")] <- "HES1"
+
+mylabels[which(genesymbols %in% "HES4")] <- "HES4"
+
+
+# Label points with the textxy function from the calibrate plot
+library(calibrate)
+with(subset(vulcano_data, adj.P.Val & abs(logFC)), textxy(logFC, -log10(adj.P.Val), labs = mylabels, cex=0.8, font = 2))
+
+# Add limit dotted lines
+abline (v = 0.5, lty = 2 )
+abline (v = -0.5, lty = 2)
+# obtengo el P valor asociado al adj.P.valor < 0.05 empleado como corte
+abline (h = -log10(tail(vulcano_data[ vulcano_data$adj.P.Val < 0.05 , ]$adj.P.Val)), lty = 2)
+```
+
+
+
+```{r vulcano-HPB-num_diff}
+# Numero de genes sobre-expresados con p-valor ajustado < 0.05 y logFC > 1
+dim(vulcano_data[ vulcano_data$adj.P.Val < 0.05 & vulcano_data$logFC > 0.5 , ])
+
+# Numero de genes sub-expresados con p-valor ajustado < 0.05 y logFC < 1
+dim(vulcano_data[ vulcano_data$adj.P.Val < 0.05 & vulcano_data$logFC < -0.5, ])
+```
+## Clusterizacion
+
+Creamos los archivos para la clusterización por Morpheus
+
+```{r HPB_cluster}
+
+# genes diferencialmente expresados
+diff_genes <- unique(rownames(vulcano_data[ vulcano_data$adj.P.Val < 0.05 , ] ))
+
+# length(diff_genes) # 20828
+exprseset_HPB_diff <- exprseset_HPB[rownames(exprseset_control) %in% diff_genes, ]
+
+# Cambiamos los nombres de las muestras
+colnames(exprseset_HPB_diff) <- c("DMSO_01", "DMSO_02", "DMSO_03", "SAMH1_01", "SAMH1_02", "SAMH1_03")
+
+# Nombre de los spots
+spots_HPB_diff <- rownames(exprseset_HPB_diff)
+
+spots_HPB_diff_list.GeneSymbol <- as.list(mapIds(hgu133plus2.db, keys=spots_HPB_diff, column="SYMBOL", keytype = "PROBEID"))
+spots_HPB_diff_char.GeneSymbol <- as.character(spots_HPB_diff_list.GeneSymbol)
+
+# Añadimos al data frame la columna con los nombres de los genes
+exprseset_HPB_diff.annotated<-cbind(exprseset_HPB_diff, spots_HPB_diff_char.GeneSymbol)
+
+# Change name column added
+colnames(exprseset_HPB_diff.annotated)[length(colnames(exprseset_HPB_diff.annotated))] <- "Description"
+
+
+# Reordering colnumns by positions. We want "Gene_names" as the second column
+
+exprseset_HPB_diff.annotated <-exprseset_HPB_diff.annotated[, c("Description", "DMSO_01", "DMSO_02", "DMSO_03", 
+                                                                  "SAMH1_01", "SAMH1_02", "SAMH1_03")]
+head(exprseset_HPB_diff.annotated)
+
+write.csv(exprseset_HPB_diff.annotated, file = "HPB_diff.csv")
+```
+
+## Análisis funcional: PANTHER y Babelomics
+
+Creamos la lista de genes que emplearemos en el análisis funcional con PANTHER y Babelomics 5.0. 
+
+```{r}
+# Genes sub-expresados
+HPB_sub <- vulcano_data[ vulcano_data$adj.P.Val < 0.05 
+                          & vulcano_data$logFC < -0.5, ]
+# Eliminamos los NA y seleccionamos los 170 top de la 1 columna (GENESYMBOL)
+HPB_sub <- HPB_sub[complete.cases(HPB_sub), ][0:170, 1] 
+write.table(HPB_sub, file = "HPB_sub_170.csv",
+          row.names = FALSE, col.names = FALSE, sep = ",", quote = FALSE)
+
+# Genes sobre-expresados
+HPB_over <- vulcano_data[ vulcano_data$adj.P.Val < 0.05 &
+                             vulcano_data$logFC > 0.5 , ]
+
+# Eliminamos los NA y seleccionamos los 170 top de la 1 columna (GENESYMBOL)
+HPB_over <- HPB_over[complete.cases(HPB_over), ][0:170, 1]
+write.table(HPB_over, file = "HPB_over_170.csv",
+          row.names = FALSE, col.names = FALSE, sep = ",", quote = FALSE)
+```
+
+
+# GSEA
+
+Aquí guardamos en archivos __.csv__ los resultados de los arrays de las distintas líneas celulares conjuntamente para llevar a cabo el análisis GSEA. 
+
+```{r cargamos-ficheros-CEL, warning=FALSE}
+
+# Read .CEL files 
+rawdata_total <- ReadAffy()
+rawdata_total
+```
+```{r}
+# Normalizo todo conjuntamente
+eset_total <- expresso(rawdata_total,
+                 bg.correct = TRUE, 
+                 bgcorrect.method="rma", # corregir fondo
+                 normalize = TRUE, 
+                 normalize.method="quantiles", 
+                 pmcorrect.method="pmonly", # los que machean perfectamente
+                 summary.method="medianpolish", # resumeme por la mediana par aun mismo gen
+                 verbose = TRUE,
+) 
+```
+
+
+Affymetrix data will usually be normalized using the affy package.  We will assume here that thedata is available as anExpressionSetobject calledeset.  Such an object will have an slot containingthe  log-expression  values  for  each  gene  on  each  array  which  can  be  extracted  using exprs(eset).
+
+```{r}
+# Extraigo las intensidades de cada muestra normalizada
+intens_total <- exprs(eset_total)
+colnames(intens_total) <- c("KOPT-K1_DMSO_01", "KOPT-K1_DMSO_02", "KOPT-K1_DMSO_03", "HPB-ALL_DMSO_01", "HPB-ALL_DMSO_02", "HPB-ALL_DMSO_03", "KOPT-K1_SAMH1_01", "KOPT-K1_SAMH1_02", "KOPT-K1_SAMH1_03", "HPB-ALL_SAMH1_01", "HPB-ALL_SAMH1_02", "HPB-ALL_SAMH1_03")
+
+# Obtengo la media de los controles DMSO
+media_controles <- apply(intens_total[, c(1:6)], 1,  mean)
+
+# Divido las muestras por la media de los controles
+intens_norm_total <- intens_total # <- apply(intens_total, 2, function(sample){sample/media_controles})
+
+```
+
+```{r}
+write.table(intens_norm_total, quote = FALSE, sep = "\t", file = "Intens.csv")
+```
+
+```{r}
+# Nombre de los spots
+spots_total <- rownames(intens_total)
+
+spots_total_list.GeneSymbol <- as.list(mapIds(hgu133plus2.db, keys=spots_total, column="SYMBOL", keytype = "PROBEID"))
+spots_total_char.GeneSymbol <- as.character(spots_total_list.GeneSymbol)
+
+# Añadimos al data frame la columna con los nombres de los genes
+chip_total.annotated<-cbind(spots_total, spots_total_char.GeneSymbol)
+df_chip_total <- as.data.frame(chip_total.annotated)
+df_chip_total$Gene_title <- NA
+colnames(df_chip_total) <- c("Probe Set ID", "Gene Symbol", "Gene Title")
+
+# df_chip_total <- df_chip_total[, c("Probe Set ID", "logFC", "AveExpr", "t", "P.Value", "adj.P.Val", "B")]
+#       head(toptable.annotated)
+
+write.table(df_chip_total, file = "chip.csv", sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+
+# Bibliografía
+
+
+<a id="Rousseeuw"></a>
+[1] Rousseeuw, P. and Verboven, S. (2002). Robust estimation in very small samples. Computational Statistics & Data Analysis, 40(4), pp.741-758.
+
+<a id="Vulcano-plot"></a>
+[2] https://www.gettinggeneticsdone.com/2014/05/r-volcano-plots-to-visualize-rnaseq-microarray.html 
+
+<a id="AnnotationDbi1"></a>
+[3] https://bioconductor.org/packages/release/bioc/vignettes/AnnotationDbi/inst/doc/IntroToAnnotationPackages.pdf
+
+<a id="AnnotationDb2"></a>
+[4] https://bioconductor.org/packages/devel/bioc/manuals/AnnotationDbi/man/AnnotationDbi.pdf
